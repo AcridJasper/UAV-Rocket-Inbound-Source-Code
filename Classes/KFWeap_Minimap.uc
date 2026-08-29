@@ -1,16 +1,18 @@
 class KFWeap_Minimap extends KFWeap_MeleeBase
 	config(UAVRocket);
 
-var() config int UAVCost;
+var() config int UAVCost, UAVRocketAmount;
+var() config float SelfDamageReductionValue, RoofCheckDistance, UAVRocketSpawnHeight, UAVRocketSpawnSpeed, UAVRocketSpawnRadius;
 var AKEvent BuyReadySound, BuyNotReadySound;
-var() config float SelfDamageReductionValue;
 var vector UAVRocketTargetLocation;
+
+var() config bool EnableMinimapCrosshair;
+var() config Color CrosshairColor;
 
 // Name of the special anim used to launch UAV drone 
 var name SpawningAnim;
 
-var() AkEvent PersistentSoundLoop;
-var() AKEvent PersistentSoundStop;
+var() AkEvent PersistentSoundLoop, PersistentSoundStop;
 
 // Time interval for updating radar positions 
 var float RadarUpdateEntitiesTime;
@@ -26,8 +28,25 @@ var transient bool bRequiresRadarClear;
 var class<KFGFxWorld_WeaponRadar> RadarUIClass;
 var KFGFxWorld_WeaponRadar RadarUI;
 
-var() config bool EnableMinimapCrosshair;
-var() config Color CrosshairColor;
+function PostBeginPlay()
+{
+    super.PostBeginPlay();
+
+    // Defaults ?
+    if( UAVCost == 0 )
+    {
+        UAVCost=300;
+        EnableMinimapCrosshair=true;
+		CrosshairColor.R = 255;
+		CrosshairColor.G = 255;
+		CrosshairColor.B = 255;
+		SelfDamageReductionValue=0.02f;
+		UAVRocketSpawnHeight=20000;
+		UAVRocketSpawnSpeed=6000;
+		UAVRocketSpawnRadius=2000;
+		SaveConfig();
+    }
+}
 
 // ************************** Radar **************************
 
@@ -233,21 +252,27 @@ simulated state Inactive
 
 simulated function DrawHUD( HUD H, Canvas C )
 {
-    local Texture2D CrosshairMain, CrosshairDrop;
+	local float ResModifier, SizeX, SizeY, ClipX;
 	local KFPlayerController KFPC;
 
 	KFPC = KFPlayerController(Instigator.Controller);
     if( KFPC != none && KFPC.bCinematicMode )
         return;
 
+    ResModifier = WorldInfo.static.GetResolutionBasedHUDScale();
+    SizeX = C.SizeX * ResModifier;
+    SizeY = C.SizeY * ResModifier;
+    ClipX = C.ClipX * ResModifier;
+
     if( EnableMinimapCrosshair )
     {
-	   	CrosshairMain = Texture2D'WEP_Minimap_MAT.Minimap_Crosshair'; // main colarable crosshair
-	   	CrosshairDrop = Texture2D'WEP_Minimap_MAT.Minimap_Crosshair_Dropshadow'; // drop shadow
-		C.SetPos(C.SizeX * 0, C.SizeY * 0);
-	    C.DrawColor = CrosshairColor;
-	    C.DrawTexture(CrosshairMain, C.ClipX/1920);
-	    C.DrawTexture(CrosshairDrop, C.ClipX/1920);
+		C.SetPos(SizeX * 0, SizeY * 0);
+		if( UAVCost == 0 )
+			C.SetDrawColor(255,255,255,255);
+		else
+	    	C.DrawColor = CrosshairColor;
+	    C.DrawTexture(Texture2D'WEP_Minimap_MAT.Minimap_Crosshair', ClipX/1920);
+	    C.DrawTexture(Texture2D'WEP_Minimap_MAT.Minimap_Crosshair_Dropshadow', ClipX/1920);
     }
 }
 
@@ -275,19 +300,21 @@ simulated state MeleeSpawning extends MeleeChainAttacking
 	// Overriden to not call FireAmmunition right at the start of the state
     simulated event BeginState( Name PreviousStateName )
 	{
+		local int i;
         local KFPerk InstigatorPerk;
 		local KFPawn_Human KFPawn;
 		local KFPlayerReplicationInfo KFPRI;
     	local KFPlayerController KFPC;
 
-/*    	// Main trace
+    	// Main trace
     	local vector HitNormal, StartTrace, EndTrace;
     	local rotator AimRot;
     	local float TraceDist;
     	// Up trace
     	local vector UpTargetLocation, UpHitNormal, UpStartTrace, UpEndTrace;
     	local rotator UpAimRot;
-    	local float UpTraceDist;*/
+    	local Actor UpTraceActor;
+    	local bool bFoundRoof;
 
         InstigatorPerk = GetPerk();
         if( InstigatorPerk != none )
@@ -295,50 +322,63 @@ simulated state MeleeSpawning extends MeleeChainAttacking
 
 		// ConsumeAmmo(CurrentFireMode);
 
-		// Rocket cost money to spawn
-		KFPawn = KFPawn_Human(Instigator);
-    	KFPC = KFPlayerController(Instigator.Controller);
+		// stop the player from interrupting the super attack with another attack
+		StartFireDisabled = true;
+		
+/*    	KFPC = KFPlayerController(Instigator.Controller);
 		KFPRI = KFPlayerReplicationInfo(Instigator.Controller.PlayerReplicationInfo);
 		if( KFPRI.Score <= UAVCost )
 		{
-			KFPawn.PlaySoundBase(BuyNotReadySound);
-      		KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Not enough dosh to launch UAV Rocket", "FF0000");
+			KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Can't launch UAV Rocket, not enough dosh !", "FF0000");
 		}
 		else
 		{
 			KFPRI.AddDosh(-UAVCost); // Take away some dosh for the purchance
-			KFPawn.PlaySoundBase(BuyReadySound);
-
-			// stop the player from interrupting the super attack with another attack
-			StartFireDisabled = true;
-			
 			ProjectileFire(); // This launches the rocket
+		}*/
 
-			// this doesn't spawn when trace collides with ZED or coprses
-/*			// Main trace
-			TraceDist = 150000;
-    		StartTrace = GetSafeStartTraceLocation();
-    		AimRot = GetAdjustedAim(StartTrace);
-    		EndTrace = StartTrace + vector(AimRot) * TraceDist;
-    		Trace( UAVRocketTargetLocation, HitNormal, EndTrace, StartTrace, true, vect(0,0,0),, 1 );
-    		// DrawDebugLine( UAVRocketTargetLocation, StartTrace, 255,0,0, true );
+		// Main trace
+		TraceDist = 150000;
+		StartTrace = GetSafeStartTraceLocation();
+		AimRot = GetAdjustedAim(StartTrace);
+		EndTrace = StartTrace + vector(AimRot) * TraceDist;
+		Trace( UAVRocketTargetLocation, HitNormal, EndTrace, StartTrace, false, vect(0,0,0),, 1 );
+		// DrawDebugLine(UAVRocketTargetLocation, StartTrace, 255,0,255);
 
-    		// Up trace (this goes up from main trace looking for ceiling)
-			UpTraceDist = 2500;
-	    	UpStartTrace = UAVRocketTargetLocation;
-	    	UpAimRot = rotator(vect(0,0,1));
-    		UpEndTrace = UpStartTrace + vector(UpAimRot) * UpTraceDist;
-    		Trace( UpTargetLocation, UpHitNormal, UpEndTrace, UpStartTrace, true, vect(0,0,0),, 1 );
-    		// DrawDebugLine( UpTargetLocation, UpStartTrace, 255,0,255, true );
-    		if( UpTargetLocation == vect(0,0,0) )
-    		{
+		// Up trace (this goes up from main trace looking for ceiling)
+		RoofCheckDistance = 2500;
+		UpStartTrace = UAVRocketTargetLocation;
+		UpAimRot = rotator(vect(0,0,1));
+		UpEndTrace = UpStartTrace + vector(UpAimRot) * RoofCheckDistance;
+		UpTraceActor = Trace( UpTargetLocation, UpHitNormal, UpEndTrace, UpStartTrace, false, vect(0,0,0),, 1 );
+		// DrawDebugLine(UpTargetLocation, UpStartTrace, 255,0,255);
+   		bFoundRoof = UpTraceActor != none;
+
+		KFPawn = KFPawn_Human(Instigator);
+	    KFPC = KFPlayerController(Instigator.Controller);
+		KFPRI = KFPlayerReplicationInfo(Instigator.Controller.PlayerReplicationInfo);
+	   	if( bFoundRoof )
+	    {
+			KFPawn.PlaySoundBase(BuyNotReadySound);
+			KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Can't launch UAV Rocket, it's blocked by roof !", "FF0000");
+	    }
+	    else
+	    {
+	    	// Rocket cost money to spawn
+			if( KFPRI.Score <= UAVCost )
+			{
+				KFPawn.PlaySoundBase(BuyNotReadySound);
+				KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Not enough dosh to launch UAV rocket !", "FF0000");
+			}
+			else
+			{
 				KFPRI.AddDosh(-UAVCost); // Take away some dosh for the purchance
 				KFPawn.PlaySoundBase(BuyReadySound);
-	    		SpawnUAVRocket();
-    		}
-	    	else
-      			KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Can't launch UAV Rocket, it's blocked by roof !", "FF0000");*/
-		}
+				KFPC.MyGFxHUD.HudChatBox.AddChatMessage("UAV Rocket inbound", "AAFF00");
+	           	for( i = 0; i < UAVRocketAmount; i++ )
+					SpawnUAVRocket();
+			}
+	    }
 
 	    // set timer for spawning projectile
 		TimeWeaponFiring(CurrentFireMode);
@@ -366,18 +406,18 @@ simulated state MeleeSpawning extends MeleeChainAttacking
 	}
 }
 
-simulated function Refund()
+/*simulated function Refund()
 {
     local KFPlayerController KFPC;
-	local KFPlayerReplicationInfo KFPRI;
+    local KFPlayerReplicationInfo KFPRI;
 
     KFPC = KFPlayerController(Instigator.Controller);
-	KFPRI = KFPlayerReplicationInfo(Instigator.Controller.PlayerReplicationInfo);
-	if( KFPRI != none )
-		KFPRI.AddDosh(UAVCost); // Refund
+    KFPRI = KFPlayerReplicationInfo(Instigator.Controller.PlayerReplicationInfo);
+    if( KFPRI != none )
+        KFPRI.AddDosh(UAVCost); // Refund
 
-	if( KFPC != none )
-    	KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Can't launch UAV Rocket, it's blocked by roof !", "FF0000");
+    if( KFPC != none )
+        KFPC.MyGFxHUD.HudChatBox.AddChatMessage("Can't launch UAV Rocket, it's blocked by roof !", "FF0000");
 }
 
 simulated function Launching()
@@ -385,9 +425,9 @@ simulated function Launching()
     local KFPlayerController KFPC;
 
     KFPC = KFPlayerController(Instigator.Controller);
-	if( KFPC != none )
-    	KFPC.MyGFxHUD.HudChatBox.AddChatMessage("UAV Rocket inbound", "AAFF00");
-}
+    if( KFPC != none )
+        KFPC.MyGFxHUD.HudChatBox.AddChatMessage("UAV Rocket inbound", "AAFF00");
+}*/
 
 function SpawnUAVRocket()
 {
@@ -395,10 +435,10 @@ function SpawnUAVRocket()
 	local vector SpawnLocation, Direction;
 	local rotator SpawnRotation;
     
-    if( Role == ROLE_Authority )
-    {
-    	SpawnLocation = UAVRocketTargetLocation + (VRand() * (float(2000)));
-		SpawnLocation.Z = float(20000);
+    // if( Role == ROLE_Authority )
+    // {
+    	SpawnLocation = UAVRocketTargetLocation + (VRand() * (UAVRocketSpawnRadius));
+		SpawnLocation.Z = UAVRocketSpawnHeight;
 	    SpawnRotation = Rotator(Direction);
     	Direction = Normal(UAVRocketTargetLocation - SpawnLocation);
 
@@ -407,9 +447,9 @@ function SpawnUAVRocket()
 		{
 			UAVRocket.Instigator = Instigator;
 			UAVRocket.InstigatorController = Instigator.Controller;
-		    UAVRocket.Velocity = Direction * float(6000);
+		    UAVRocket.Velocity = Direction * UAVRocketSpawnSpeed;
 		}
-	}
+	// }
 }
 
 // Reduce the damage received from self attacks
@@ -423,8 +463,14 @@ function AdjustDamage(out int InDamage, class<DamageType> DamageType, Actor Dama
 
 defaultproperties
 {
-	BuyReadySound=AkEvent'WW_WEP_HRG_SonicGun.Play_WEP_HRG_SonicGun_Charge_Once'
-	BuyNotReadySound=AkEvent'WW_WEP_SA_SW500.Play_WEP_SA_SW500_Handling_DryFire'
+	PlayerViewOffset=(X=12,Y=6,Z=0.5)
+
+	// Content
+	PackageKey="Minimap"
+	FirstPersonMeshName="WEP_Minimap_MESH.WEP_1stP_Minimap_Rig"
+	FirstPersonAnimSetNames(0)="WEP_Minimap_ARCH.Wep_1stP_Minimap_Anim"
+	PickupMeshName="WEP_Minimap_MESH.Wep_Minimap_Pickup"
+	AttachmentArchetypeName="WEP_Minimap_ARCH.Wep_Minimap_3P"
 
 	RadarUpdateEntitiesTime=0.1f
 	MaxRadarDistance=2000
@@ -433,15 +479,6 @@ defaultproperties
 	RadarUIClass=class'KFGFxWorld_WeaponRadar'
     NumBloodMapMaterials=2 // no blood on radar itself
 	bRequiresRadarClear=false
-
-	PlayerViewOffset=(X=12,Y=6,Z=0.5)
-	
-	// Content
-	PackageKey="Minimap"
-	FirstPersonMeshName="WEP_Minimap_MESH.WEP_1stP_Minimap_Rig"
-	FirstPersonAnimSetNames(0)="WEP_Minimap_ARCH.Wep_1stP_Minimap_Anim"
-	PickupMeshName="WEP_Minimap_MESH.Wep_Minimap_Pickup"
-	AttachmentArchetypeName="WEP_Minimap_ARCH.Wep_Minimap_3P"
 
     // Inventory
     InventoryGroup=IG_Equipment
@@ -454,15 +491,17 @@ defaultproperties
 	// DEFAULT_FIREMODE
 	FireModeIconPaths(DEFAULT_FIREMODE)=Texture2D'WEP_Minimap_MAT.UI_FireModeSelect_Minimap'
 	FiringStatesArray(DEFAULT_FIREMODE)=MeleeSpawning
-	WeaponFireTypes(DEFAULT_FIREMODE)=EWFT_Projectile
+/*	WeaponFireTypes(DEFAULT_FIREMODE)=EWFT_Projectile
 	WeaponProjectiles(DEFAULT_FIREMODE)=class'KFProj_Trace_Minimap'
 	InstantHitDamageTypes(DEFAULT_FIREMODE)=none
 	InstantHitDamage(DEFAULT_FIREMODE)=0
 	FireInterval(DEFAULT_FIREMODE)=1 // 60 RPM //1.33 //45 RPM
-	AmmoCost(BASH_FIREMODE)=0
+	AmmoCost(BASH_FIREMODE)=0*/
 	FireOffset=(X=0,Y=0,Z=0)
 
 	SpawningAnim=Guncheck_v2
+    BuyReadySound=AkEvent'WW_WEP_HRG_SonicGun.Play_WEP_HRG_SonicGun_Charge_Once'
+	BuyNotReadySound=AkEvent'WW_WEP_SA_SW500.Play_WEP_SA_SW500_Handling_DryFire'
 
 	// HEAVY_ATK_FIREMODE (Does only bash attacks)
 	FiringStatesArray(HEAVY_ATK_FIREMODE)=MeleeAttackBasic
